@@ -52,7 +52,7 @@ export default async function handler(req: NextRequest) {
         'X-Title': 'Terminal AI Assistant'
       },
       body: JSON.stringify({
-        model: 'qwen/qwen2.5-vl-72b-instruct:free',
+        model: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
         messages,
         temperature: 0.1,
         top_p: 0.9
