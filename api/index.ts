@@ -43,19 +43,19 @@ export default async function handler(req: NextRequest) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
 
-    const response = await fetch('https://api.hyperbolic.xyz/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.HYPERBOLIC_API_KEY}`,
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://terminal-ai-api.vercel.app',
+        'X-Title': 'Terminal AI Assistant'
       },
       body: JSON.stringify({
+        model: 'deepseek/deepseek-chat:free',
         messages,
-        model: 'deepseek-ai/DeepSeek-V3',
-        max_tokens: 256,
         temperature: 0.1,
-        top_p: 0.9,
-        stream: false
+        top_p: 0.9
       }),
       signal: controller.signal
     });
@@ -63,7 +63,8 @@ export default async function handler(req: NextRequest) {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      throw new Error(`API Error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`API Error (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
