@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/edge.ts"
+  "functions": {
+    "pages/api/*.ts": {
+      "memory": 1024,
+      "maxDuration": 30
     }
-  ]
+  }
 }
