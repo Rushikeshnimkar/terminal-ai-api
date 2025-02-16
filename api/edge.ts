@@ -25,10 +25,23 @@ export default async function handler(req: NextRequest) {
   }
 
   try {
-    const { prompt, messages } = await req.json();
+    const body = await req.json();
+    const prompt = body.prompt || body.messages?.[0]?.content;
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: 'Prompt is required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const messages = [{
+      role: 'user',
+      content: prompt
+    }];
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+    const timeout = setTimeout(() => controller.abort(), 25000);
 
     const response = await fetch('https://api.hyperbolic.xyz/v1/chat/completions', {
       method: 'POST',
@@ -37,10 +50,7 @@ export default async function handler(req: NextRequest) {
         'Authorization': `Bearer ${process.env.HYPERBOLIC_API_KEY}`,
       },
       body: JSON.stringify({
-        messages: messages || [{
-          role: 'user',
-          content: prompt || 'Hello'
-        }],
+        messages,
         model: 'deepseek-ai/DeepSeek-V3',
         max_tokens: 256,
         temperature: 0.1,
