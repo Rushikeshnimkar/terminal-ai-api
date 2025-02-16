@@ -40,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const chatRequest: ChatRequest = {
             messages,
-            model: model || 'deepseek-ai/DeepSeek-V3',
+            model: model || 'meta-llama/Llama-3.3-70B-Instruct',
             max_tokens: max_tokens || 512,
             temperature: temperature || 0.1,
             top_p: top_p || 0.9,
