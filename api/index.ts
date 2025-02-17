@@ -54,7 +54,7 @@ export default async function handler(req: NextRequest) {
       body: JSON.stringify({
         model: 'qwen/qwen2.5-vl-72b-instruct:free',
         messages,
-        temperature: 0.1,
+        temperature: 0.3,
         top_p: 0.9
       }),
       signal: controller.signal
