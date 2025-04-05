@@ -38,22 +38,36 @@ const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT || "gcp-starter";
 // Direct HTTP calls to Pinecone instead of using the SDK
 async function pineconeListIndexes(): Promise<string[]> {
   try {
-    const response = await fetch("https://controller.pinecone.io/indexes", {
+    console.log("Attempting to list Pinecone indexes...");
+
+    // Check if API key is present
+    if (!PINECONE_API_KEY) {
+      console.log("No Pinecone API key found, skipping index listing");
+      return [];
+    }
+
+    const response = await fetch("https://api.pinecone.io/indexes", {
       method: "GET",
       headers: {
         "Api-Key": PINECONE_API_KEY,
         "Content-Type": "application/json",
+        Accept: "application/json",
       },
     });
 
     if (!response.ok) {
-      throw new Error(`Pinecone API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`Pinecone API error (${response.status}): ${errorText}`);
+
+      // If we get 530 error or other issues, just return empty array to continue
+      return [];
     }
 
     const data = await response.json();
-    return data.map((index: any) => index.name);
+    return Array.isArray(data) ? data.map((index: any) => index.name) : [];
   } catch (error) {
     console.error("Error listing Pinecone indexes:", error);
+    // Return empty array to allow the app to continue without Pinecone
     return [];
   }
 }
@@ -160,15 +174,40 @@ async function pineconeQuery(
 
 // Initialize Pinecone
 const initPinecone = async (): Promise<boolean> => {
+  // Skip Pinecone if API key is not set
+  if (!PINECONE_API_KEY) {
+    console.log("Pinecone API key not set, skipping initialization");
+    return false;
+  }
+
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     try {
       console.log(`Attempt ${attempt} to initialize Pinecone`);
 
       // List existing indexes
       const indexes = await pineconeListIndexes();
-      console.log("Available indexes:", indexes);
 
-      // Check if index exists
+      // If we couldn't list indexes but have an API key, try creating one anyway
+      if (indexes.length === 0 && PINECONE_API_KEY) {
+        console.log("No indexes found, attempting to create one");
+
+        try {
+          const created = await pineconeCreateIndex(PINECONE_INDEX_NAME);
+          if (created) {
+            console.log(`Successfully created index ${PINECONE_INDEX_NAME}`);
+            console.log("Waiting for index to initialize...");
+            await new Promise((resolve) => setTimeout(resolve, 30000));
+            return true;
+          }
+        } catch (createError) {
+          console.error("Error creating index:", createError);
+        }
+
+        // If we failed to create an index, return false to disable Pinecone
+        return false;
+      }
+
+      // Continue with normal flow if indexes were found
       const indexExists = indexes.includes(PINECONE_INDEX_NAME);
 
       if (!indexExists) {
@@ -485,8 +524,9 @@ export default async function handler(req: NextRequest) {
   }
 
   try {
-    // Initialize Pinecone
+    // Initialize Pinecone - but don't fail if it doesn't work
     const pineconeInitialized = await initPinecone();
+    console.log("Pinecone initialized:", pineconeInitialized);
 
     const body = await req.json();
     const userPrompt = body.prompt || body.messages?.[0]?.content;
@@ -499,13 +539,20 @@ export default async function handler(req: NextRequest) {
       });
     }
 
-    // Retrieve conversation history if available
+    // Get history only if Pinecone is working
     let history: ChatMessage[] = [];
     if (pineconeInitialized) {
-      history = await getConversationHistory(conversationId);
-      console.log(
-        `Retrieved ${history.length} messages from conversation history`
-      );
+      try {
+        history = await getConversationHistory(conversationId);
+        console.log(
+          `Retrieved ${history.length} messages from conversation history`
+        );
+      } catch (historyError) {
+        console.error(
+          "Error retrieving history, continuing without it:",
+          historyError
+        );
+      }
     }
 
     // Generate system prompt with conversation history
