@@ -1,7 +1,6 @@
 import { type NextRequest } from "next/server";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { v4 as uuidv4 } from "uuid";
-import crypto from "crypto";
 
 // Types for better type safety
 interface ChatMessage {
@@ -31,7 +30,7 @@ let pinecone: Pinecone | null = null;
 let pineconeIndex: any = null;
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY = 1000;
-const VECTOR_DIMENSION = 1536;
+const VECTOR_DIMENSION = 1024;
 
 const initPinecone = async () => {
   if (pinecone) return;
@@ -123,24 +122,24 @@ const initPinecone = async () => {
   }
 };
 
-// Generate embeddings - improved version with fallback
+// Generate embeddings - Edge-compatible version (using simple math instead of crypto)
 const generateEmbedding = (text: string): number[] => {
   try {
-    // In a production environment, use OpenAI, Google or other embedding APIs
-    // This is a placeholder that creates more diverse vectors based on content
-    const hash = crypto.createHash("sha256").update(text).digest("hex");
     const values = Array(VECTOR_DIMENSION).fill(0);
 
-    // Use the hash to set values in the embedding with more variance
-    for (let i = 0; i < hash.length; i += 2) {
-      const value = parseInt(hash.substring(i, i + 2), 16);
+    // Simple character-based hashing to generate values
+    for (let i = 0; i < text.length; i++) {
+      const charCode = text.charCodeAt(i);
+      const position = i % VECTOR_DIMENSION;
 
-      // Distribute values throughout the embedding
-      for (let j = 0; j < 8; j++) {
-        const position = (i * 8 + j) % VECTOR_DIMENSION;
-        // Create more variance in the values
-        values[position] = (value / 255) * Math.sin(position);
-      }
+      // Use character codes to create pseudo-random values
+      values[position] += (charCode / 255) * Math.sin(i);
+
+      // Add some values based on neighboring positions to increase complexity
+      const nextPos = (position + 1) % VECTOR_DIMENSION;
+      const prevPos = (position - 1 + VECTOR_DIMENSION) % VECTOR_DIMENSION;
+      values[nextPos] += (charCode / 510) * Math.cos(i);
+      values[prevPos] += (charCode / 510) * Math.tan(i % 1.5);
     }
 
     // Normalize the vector
@@ -150,10 +149,10 @@ const generateEmbedding = (text: string): number[] => {
     return values.map((val) => (magnitude > 0 ? val / magnitude : 0));
   } catch (error) {
     console.error("Error generating embedding:", error);
-    // Return a random embedding as fallback
+    // Return a deterministic but still varying embedding as fallback
     return Array(VECTOR_DIMENSION)
       .fill(0)
-      .map(() => Math.random());
+      .map((_, i) => Math.sin(i));
   }
 };
 
@@ -264,7 +263,7 @@ const saveConversation = async (
       });
     }
 
-    // Fix the upsert call with explicit type casting if needed
+    // Try different upsert syntax to fix Edge Function compatibility
     if (vectors.length > 100) {
       const batches: PineconeVector[][] = [];
       for (let i = 0; i < vectors.length; i += 100) {
@@ -272,19 +271,17 @@ const saveConversation = async (
       }
 
       for (const batch of batches) {
+        // Try direct upsert format
         await pineconeIndex.upsert({
-          upsertRequest: {
-            vectors: batch,
-            namespace: "conversations",
-          },
+          vectors: batch,
+          namespace: "conversations",
         });
       }
     } else {
+      // Try direct upsert format
       await pineconeIndex.upsert({
-        upsertRequest: {
-          vectors,
-          namespace: "conversations",
-        },
+        vectors,
+        namespace: "conversations",
       });
     }
 
