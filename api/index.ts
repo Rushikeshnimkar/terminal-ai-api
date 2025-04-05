@@ -1,12 +1,11 @@
 import { type NextRequest } from "next/server";
-import { Pinecone } from "@pinecone-database/pinecone";
 import { v4 as uuidv4 } from "uuid";
 
 // Types for better type safety
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
-  timestamp?: number; // Add optional timestamp
+  timestamp?: number;
 }
 
 interface PineconeMetadata {
@@ -25,84 +24,170 @@ interface PineconeVector {
   metadata: PineconeMetadata;
 }
 
-// Initialize Pinecone with improved retry logic and configuration
-let pinecone: Pinecone | null = null;
-let pineconeIndex: any = null;
+// Configuration
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY = 1000;
 const VECTOR_DIMENSION = 1024;
 
-const initPinecone = async () => {
-  if (pinecone) return;
+// Use environment variables to configure Pinecone
+const PINECONE_API_KEY = process.env.PINECONE_API_KEY || "";
+const PINECONE_INDEX_NAME =
+  process.env.PINECONE_INDEX_NAME || "terminal-ai-conversations";
+const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT || "gcp-starter";
 
+// Direct HTTP calls to Pinecone instead of using the SDK
+async function pineconeListIndexes(): Promise<string[]> {
+  try {
+    const response = await fetch("https://controller.pinecone.io/indexes", {
+      method: "GET",
+      headers: {
+        "Api-Key": PINECONE_API_KEY,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Pinecone API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.map((index: any) => index.name);
+  } catch (error) {
+    console.error("Error listing Pinecone indexes:", error);
+    return [];
+  }
+}
+
+async function pineconeCreateIndex(indexName: string): Promise<boolean> {
+  try {
+    const response = await fetch("https://controller.pinecone.io/indexes", {
+      method: "POST",
+      headers: {
+        "Api-Key": PINECONE_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: indexName,
+        dimension: VECTOR_DIMENSION,
+        metric: "cosine",
+        spec: {
+          serverless: {
+            cloud: "aws",
+            region: "us-west-1",
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Pinecone index creation error: ${response.status}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error creating Pinecone index:", error);
+    return false;
+  }
+}
+
+async function pineconeUpsert(
+  indexName: string,
+  vectors: PineconeVector[],
+  namespace: string
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `https://${indexName}-${PINECONE_ENVIRONMENT}.svc.${PINECONE_ENVIRONMENT}.pinecone.io/vectors/upsert`,
+      {
+        method: "POST",
+        headers: {
+          "Api-Key": PINECONE_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          vectors,
+          namespace,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Pinecone upsert error: ${response.status}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error upserting vectors to Pinecone:", error);
+    return false;
+  }
+}
+
+async function pineconeQuery(
+  indexName: string,
+  filter: any,
+  topK: number,
+  namespace: string
+): Promise<any> {
+  try {
+    const response = await fetch(
+      `https://${indexName}-${PINECONE_ENVIRONMENT}.svc.${PINECONE_ENVIRONMENT}.pinecone.io/query`,
+      {
+        method: "POST",
+        headers: {
+          "Api-Key": PINECONE_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          vector: Array(VECTOR_DIMENSION).fill(0),
+          filter,
+          topK,
+          includeMetadata: true,
+          namespace,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Pinecone query error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error querying Pinecone:", error);
+    return { matches: [] };
+  }
+}
+
+// Initialize Pinecone
+const initPinecone = async (): Promise<boolean> => {
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     try {
       console.log(`Attempt ${attempt} to initialize Pinecone`);
 
-      pinecone = new Pinecone({
-        apiKey: process.env.PINECONE_API_KEY || "",
-      });
-
-      const indexName =
-        process.env.PINECONE_INDEX_NAME || "terminal-ai-conversations";
-      console.log(`Using index name: ${indexName}`);
-
       // List existing indexes
-      const indexes = await pinecone.listIndexes();
+      const indexes = await pineconeListIndexes();
       console.log("Available indexes:", indexes);
 
-      // Fix: Check if index exists using indexes.indexes array
-      const indexExists =
-        indexes.indexes?.some((index) => index.name === indexName) || false;
+      // Check if index exists
+      const indexExists = indexes.includes(PINECONE_INDEX_NAME);
 
       if (!indexExists) {
-        console.log(`Creating index ${indexName}`);
-        try {
-          await pinecone.createIndex({
-            name: indexName,
-            dimension: VECTOR_DIMENSION,
-            metric: "cosine",
-            spec: {
-              serverless: {
-                cloud: "aws",
-                region: "us-west-1",
-              },
-            },
-          });
-
-          // Wait for index initialization
-          console.log("Waiting for index to initialize...");
-          await new Promise((resolve) => setTimeout(resolve, 30000));
-          console.log("Index initialization wait complete");
-        } catch (error) {
-          console.error(`Error creating index ${indexName}:`, error);
-
-          // Try with a different region as fallback
-          console.log("Attempting to create index with alternate region...");
-          await pinecone.createIndex({
-            name: indexName,
-            dimension: VECTOR_DIMENSION,
-            metric: "cosine",
-            spec: {
-              serverless: {
-                cloud: "aws",
-                region: "us-east-1", // Fallback region
-              },
-            },
-          });
-
-          // Wait for index initialization
-          console.log("Waiting for index to initialize...");
-          await new Promise((resolve) => setTimeout(resolve, 30000));
-          console.log("Index initialization wait complete");
+        console.log(`Creating index ${PINECONE_INDEX_NAME}`);
+        const created = await pineconeCreateIndex(PINECONE_INDEX_NAME);
+        if (!created) {
+          throw new Error("Failed to create index");
         }
+
+        // Wait for index initialization
+        console.log("Waiting for index to initialize...");
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+        console.log("Index initialization wait complete");
       } else {
-        console.log(`Index ${indexName} already exists`);
+        console.log(`Index ${PINECONE_INDEX_NAME} already exists`);
       }
 
-      pineconeIndex = pinecone.Index(indexName);
       console.log("Pinecone initialization successful");
-      return;
+      return true;
     } catch (error) {
       console.error(
         `Pinecone initialization attempt ${attempt} failed:`,
@@ -111,8 +196,7 @@ const initPinecone = async () => {
 
       if (attempt === RETRY_ATTEMPTS) {
         console.error("All Pinecone initialization attempts failed");
-        pinecone = null;
-        return;
+        return false;
       }
 
       await new Promise((resolve) =>
@@ -120,9 +204,10 @@ const initPinecone = async () => {
       );
     }
   }
+  return false;
 };
 
-// Generate embeddings - Edge-compatible version (using simple math instead of crypto)
+// Generate embeddings - Edge-compatible version using simple math
 const generateEmbedding = (text: string): number[] => {
   try {
     const values = Array(VECTOR_DIMENSION).fill(0);
@@ -217,8 +302,6 @@ const saveConversation = async (
   userInput: string,
   aiResponse: string
 ): Promise<boolean> => {
-  if (!pineconeIndex) return false;
-
   try {
     const currentTime = Date.now();
     const vectors: PineconeVector[] = [];
@@ -263,26 +346,13 @@ const saveConversation = async (
       });
     }
 
-    // Try different upsert syntax to fix Edge Function compatibility
-    if (vectors.length > 100) {
-      const batches: PineconeVector[][] = [];
-      for (let i = 0; i < vectors.length; i += 100) {
-        batches.push(vectors.slice(i, i + 100));
+    // Upload in batches
+    if (vectors.length > 0) {
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
+        const batch = vectors.slice(i, i + BATCH_SIZE);
+        await pineconeUpsert(PINECONE_INDEX_NAME, batch, "conversations");
       }
-
-      for (const batch of batches) {
-        // Try direct upsert format
-        await pineconeIndex.upsert({
-          vectors: batch,
-          namespace: "conversations",
-        });
-      }
-    } else {
-      // Try direct upsert format
-      await pineconeIndex.upsert({
-        vectors,
-        namespace: "conversations",
-      });
     }
 
     console.log(`Saved ${vectors.length} conversation vectors to Pinecone`);
@@ -297,17 +367,14 @@ const saveConversation = async (
 const getConversationHistory = async (
   conversationId: string
 ): Promise<ChatMessage[]> => {
-  if (!pineconeIndex) return [];
-
   try {
     // Query for conversation messages
-    const queryResponse = await pineconeIndex.query({
-      vector: Array(VECTOR_DIMENSION).fill(0), // Generic query vector
-      filter: { conversationId },
-      topK: 100,
-      includeMetadata: true,
-      namespace: "conversations",
-    });
+    const queryResponse = await pineconeQuery(
+      PINECONE_INDEX_NAME,
+      { conversationId },
+      100,
+      "conversations"
+    );
 
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
       return [];
@@ -419,7 +486,7 @@ export default async function handler(req: NextRequest) {
 
   try {
     // Initialize Pinecone
-    await initPinecone();
+    const pineconeInitialized = await initPinecone();
 
     const body = await req.json();
     const userPrompt = body.prompt || body.messages?.[0]?.content;
@@ -434,7 +501,7 @@ export default async function handler(req: NextRequest) {
 
     // Retrieve conversation history if available
     let history: ChatMessage[] = [];
-    if (pineconeIndex) {
+    if (pineconeInitialized) {
       history = await getConversationHistory(conversationId);
       console.log(
         `Retrieved ${history.length} messages from conversation history`
@@ -487,7 +554,7 @@ export default async function handler(req: NextRequest) {
       console.log("Received response from AI model");
 
       // Save conversation to Pinecone
-      if (pineconeIndex && data?.choices?.[0]?.message?.content) {
+      if (pineconeInitialized && data?.choices?.[0]?.message?.content) {
         const aiResponse = data.choices[0].message.content;
         console.log("Saving conversation to Pinecone");
         await saveConversation(conversationId, userPrompt, aiResponse);

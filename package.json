@@ -11,7 +11,6 @@
   "type": "commonjs",
   "description": "",
   "dependencies": {
-    "@pinecone-database/pinecone": "^5.1.1",
     "@types/node": "^22.13.4",
     "@vercel/node": "^5.1.7",
     "next": "^15.1.7",
