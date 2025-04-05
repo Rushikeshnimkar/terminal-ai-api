@@ -37,71 +37,15 @@ const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT || "gcp-starter";
 
 // Direct HTTP calls to Pinecone instead of using the SDK
 async function pineconeListIndexes(): Promise<string[]> {
-  try {
-    console.log("Attempting to list Pinecone indexes...");
-
-    // Check if API key is present
-    if (!PINECONE_API_KEY) {
-      console.log("No Pinecone API key found, skipping index listing");
-      return [];
-    }
-
-    const response = await fetch("https://api.pinecone.io/indexes", {
-      method: "GET",
-      headers: {
-        "Api-Key": PINECONE_API_KEY,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Pinecone API error (${response.status}): ${errorText}`);
-
-      // If we get 530 error or other issues, just return empty array to continue
-      return [];
-    }
-
-    const data = await response.json();
-    return Array.isArray(data) ? data.map((index: any) => index.name) : [];
-  } catch (error) {
-    console.error("Error listing Pinecone indexes:", error);
-    // Return empty array to allow the app to continue without Pinecone
-    return [];
-  }
+  // Since we already know your index exists, we can skip listing
+  // and just return a hardcoded array with your index name
+  return [PINECONE_INDEX_NAME];
 }
 
 async function pineconeCreateIndex(indexName: string): Promise<boolean> {
-  try {
-    const response = await fetch("https://controller.pinecone.io/indexes", {
-      method: "POST",
-      headers: {
-        "Api-Key": PINECONE_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: indexName,
-        dimension: VECTOR_DIMENSION,
-        metric: "cosine",
-        spec: {
-          serverless: {
-            cloud: "aws",
-            region: "us-west-1",
-          },
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Pinecone index creation error: ${response.status}`);
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Error creating Pinecone index:", error);
-    return false;
-  }
+  // Since we know the index already exists, just return true
+  console.log(`Index ${indexName} is already available`);
+  return true;
 }
 
 async function pineconeUpsert(
@@ -110,8 +54,9 @@ async function pineconeUpsert(
   namespace: string
 ): Promise<boolean> {
   try {
+    // Use the exact hostname provided in your Pinecone details
     const response = await fetch(
-      `https://${indexName}-${PINECONE_ENVIRONMENT}.svc.${PINECONE_ENVIRONMENT}.pinecone.io/vectors/upsert`,
+      "https://terminal-ai-conversations-yisuhd1.svc.aped-4627-b74a.pinecone.io/vectors/upsert",
       {
         method: "POST",
         headers: {
@@ -143,8 +88,9 @@ async function pineconeQuery(
   namespace: string
 ): Promise<any> {
   try {
+    // Use the exact hostname provided in your Pinecone details
     const response = await fetch(
-      `https://${indexName}-${PINECONE_ENVIRONMENT}.svc.${PINECONE_ENVIRONMENT}.pinecone.io/query`,
+      "https://terminal-ai-conversations-yisuhd1.svc.aped-4627-b74a.pinecone.io/query",
       {
         method: "POST",
         headers: {
@@ -180,70 +126,9 @@ const initPinecone = async (): Promise<boolean> => {
     return false;
   }
 
-  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
-    try {
-      console.log(`Attempt ${attempt} to initialize Pinecone`);
-
-      // List existing indexes
-      const indexes = await pineconeListIndexes();
-
-      // If we couldn't list indexes but have an API key, try creating one anyway
-      if (indexes.length === 0 && PINECONE_API_KEY) {
-        console.log("No indexes found, attempting to create one");
-
-        try {
-          const created = await pineconeCreateIndex(PINECONE_INDEX_NAME);
-          if (created) {
-            console.log(`Successfully created index ${PINECONE_INDEX_NAME}`);
-            console.log("Waiting for index to initialize...");
-            await new Promise((resolve) => setTimeout(resolve, 30000));
-            return true;
-          }
-        } catch (createError) {
-          console.error("Error creating index:", createError);
-        }
-
-        // If we failed to create an index, return false to disable Pinecone
-        return false;
-      }
-
-      // Continue with normal flow if indexes were found
-      const indexExists = indexes.includes(PINECONE_INDEX_NAME);
-
-      if (!indexExists) {
-        console.log(`Creating index ${PINECONE_INDEX_NAME}`);
-        const created = await pineconeCreateIndex(PINECONE_INDEX_NAME);
-        if (!created) {
-          throw new Error("Failed to create index");
-        }
-
-        // Wait for index initialization
-        console.log("Waiting for index to initialize...");
-        await new Promise((resolve) => setTimeout(resolve, 30000));
-        console.log("Index initialization wait complete");
-      } else {
-        console.log(`Index ${PINECONE_INDEX_NAME} already exists`);
-      }
-
-      console.log("Pinecone initialization successful");
-      return true;
-    } catch (error) {
-      console.error(
-        `Pinecone initialization attempt ${attempt} failed:`,
-        error
-      );
-
-      if (attempt === RETRY_ATTEMPTS) {
-        console.error("All Pinecone initialization attempts failed");
-        return false;
-      }
-
-      await new Promise((resolve) =>
-        setTimeout(resolve, RETRY_DELAY * attempt)
-      );
-    }
-  }
-  return false;
+  // We already know the index exists, so just return true
+  console.log(`Using existing Pinecone index: ${PINECONE_INDEX_NAME}`);
+  return true;
 };
 
 // Generate embeddings - Edge-compatible version using simple math
