@@ -466,7 +466,7 @@ export default async function handler(req: NextRequest) {
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
-            model: "openrouter/quasar-alpha",
+            model: "meta-llama/llama-4-maverick:free",
             messages,
             temperature: 0.3,
             top_p: 0.9,
