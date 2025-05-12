@@ -366,19 +366,8 @@ Requirements:
 1. provide ONLY ONE single command without explanation.
 2. Use relative paths where applicable.
 3. No PowerShell commands, only CMD-compatible commands.
-4. For file operations:
-   - Before creating files/directories, include existence checks:
-     e.g., "if not exist path\\to\\dir mkdir path\\to\\dir"
-   - Before deleting, use safeguards:
-     e.g., "del /p path\\to\\file" or "choice /c yn /m \"Delete file?\" && (if errorlevel 1 if not errorlevel 2 del path\\to\\file)"
-   - For critical operations, add confirmations with choice or set /p
-   - Check drive availability before accessing: "if exist D:\\ (command) else (echo Drive not found)"
-5. Never operate on system directories (C:\\Windows, C:\\Program Files, etc.)
-6. For search operations across drives:
-   - Add error handling: "2>nul" to suppress errors
-   - Use "for" loops with errorlevel checks
-7. When showing file content, check file existence first
-8. When using environment variables, verify they exist
+4. When showing file content, check file existence first
+5. When using environment variables, verify they exist
 
 Your response:`;
 };
