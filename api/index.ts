@@ -365,9 +365,8 @@ Requirements:
 
 1. provide ONLY ONE single command without explanation.
 2. Use relative paths where applicable.
-3. No PowerShell commands, only CMD-compatible commands.
-4. When showing file content, check file existence first
-5. When using environment variables, verify they exist
+3. When showing file content, check file existence first
+4. When using environment variables, verify they exist
 
 Your response:`;
 };
