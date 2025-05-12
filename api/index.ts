@@ -356,7 +356,7 @@ const createSystemPrompt = (
           .join("\n")}`
       : "No previous conversation";
 
-  return `Task: Generate a valid Windows Command Prompt command or help the user with their request.
+  return `Task: Generate a valid Windows Command  or help the user with their request.
 User request: ${userPrompt}
 
 ${historyText}
