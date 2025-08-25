@@ -454,7 +454,7 @@ export default async function handler(req: NextRequest) {
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
-            model: "moonshotai/kimi-dev-72b:free",
+            model: "qwen/qwen3-coder:free",
             messages,
             temperature: 0.3,
             top_p: 0.9,
