@@ -454,7 +454,7 @@ export default async function handler(req: NextRequest) {
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
-            model: "qwen/qwen3-coder:free",
+            model: "z-ai/glm-4.5-air:free",
             messages,
             temperature: 0.3,
             top_p: 0.9,
