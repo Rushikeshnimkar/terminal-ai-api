@@ -1,4 +1,4 @@
-import { type NextRequest } from "next/server";
+import { type NextApiRequest, type NextApiResponse } from "next";
 import { v4 as uuidv4 } from "uuid";
 
 // Types for better type safety
@@ -118,15 +118,15 @@ async function pineconeQuery(
   }
 }
 
-// Initialize Pinecone
+// ... (initPinecone, generateEmbedding, chunkText, saveConversation, getConversationHistory)
+// ...
 const initPinecone = async (): Promise<boolean> => {
   // Skip Pinecone if API key is not set
   if (!PINECONE_API_KEY) {
     console.log("Pinecone API key not set, skipping initialization");
     return false;
-  }
+  } // We already know the index exists, so just return true
 
-  // We already know the index exists, so just return true
   console.log(`Using existing Pinecone index: ${PINECONE_INDEX_NAME}`);
   return true;
 };
@@ -134,31 +134,26 @@ const initPinecone = async (): Promise<boolean> => {
 // Generate embeddings - Edge-compatible version using simple math
 const generateEmbedding = (text: string): number[] => {
   try {
-    const values = Array(VECTOR_DIMENSION).fill(0);
+    const values = Array(VECTOR_DIMENSION).fill(0); // Simple character-based hashing to generate values
 
-    // Simple character-based hashing to generate values
     for (let i = 0; i < text.length; i++) {
       const charCode = text.charCodeAt(i);
-      const position = i % VECTOR_DIMENSION;
+      const position = i % VECTOR_DIMENSION; // Use character codes to create pseudo-random values
 
-      // Use character codes to create pseudo-random values
-      values[position] += (charCode / 255) * Math.sin(i);
+      values[position] += (charCode / 255) * Math.sin(i); // Add some values based on neighboring positions to increase complexity
 
-      // Add some values based on neighboring positions to increase complexity
       const nextPos = (position + 1) % VECTOR_DIMENSION;
       const prevPos = (position - 1 + VECTOR_DIMENSION) % VECTOR_DIMENSION;
       values[nextPos] += (charCode / 510) * Math.cos(i);
       values[prevPos] += (charCode / 510) * Math.tan(i % 1.5);
-    }
+    } // Normalize the vector
 
-    // Normalize the vector
     const magnitude = Math.sqrt(
       values.reduce((sum, val) => sum + val * val, 0)
     );
     return values.map((val) => (magnitude > 0 ? val / magnitude : 0));
   } catch (error) {
-    console.error("Error generating embedding:", error);
-    // Return a deterministic but still varying embedding as fallback
+    console.error("Error generating embedding:", error); // Return a deterministic but still varying embedding as fallback
     return Array(VECTOR_DIMENSION)
       .fill(0)
       .map((_, i) => Math.sin(i));
@@ -168,9 +163,8 @@ const generateEmbedding = (text: string): number[] => {
 // Process and chunk text for better semantic representation
 function chunkText(text: string, maxChunkSize: number = 512): string[] {
   // Simple chunking implementation
-  const chunks: string[] = [];
+  const chunks: string[] = []; // Split by sections first (double newlines)
 
-  // Split by sections first (double newlines)
   const sections = text.split(/\n\n+/);
 
   let currentChunk = "";
@@ -183,9 +177,8 @@ function chunkText(text: string, maxChunkSize: number = 512): string[] {
       // Add current chunk if not empty
       if (currentChunk) {
         chunks.push(currentChunk);
-      }
+      } // Handle large sections
 
-      // Handle large sections
       if (section.length > maxChunkSize) {
         // Split by sentences
         const sentences = section.split(/(?<=[.!?])\s+/);
@@ -210,9 +203,8 @@ function chunkText(text: string, maxChunkSize: number = 512): string[] {
         currentChunk = section;
       }
     }
-  }
+  } // Add the last chunk if not empty
 
-  // Add the last chunk if not empty
   if (currentChunk) {
     chunks.push(currentChunk);
   }
@@ -228,9 +220,8 @@ const saveConversation = async (
 ): Promise<boolean> => {
   try {
     const currentTime = Date.now();
-    const vectors: PineconeVector[] = [];
+    const vectors: PineconeVector[] = []; // Process user input
 
-    // Process user input
     const userChunks = chunkText(userInput);
     for (let i = 0; i < userChunks.length; i++) {
       const chunk = userChunks[i];
@@ -248,9 +239,8 @@ const saveConversation = async (
           source: "user-message",
         },
       });
-    }
+    } // Process AI response
 
-    // Process AI response
     const aiChunks = chunkText(aiResponse);
     for (let i = 0; i < aiChunks.length; i++) {
       const chunk = aiChunks[i];
@@ -268,9 +258,8 @@ const saveConversation = async (
           source: "assistant-message",
         },
       });
-    }
+    } // Upload in batches
 
-    // Upload in batches
     if (vectors.length > 0) {
       const BATCH_SIZE = 100;
       for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
@@ -302,9 +291,8 @@ const getConversationHistory = async (
 
     if (!queryResponse.matches || queryResponse.matches.length === 0) {
       return [];
-    }
+    } // Group by role and timestamp to reconstruct messages
 
-    // Group by role and timestamp to reconstruct messages
     const messageMap = new Map<string, any[]>();
 
     for (const match of queryResponse.matches) {
@@ -316,16 +304,14 @@ const getConversationHistory = async (
         messageMap.set(key, []);
       }
       messageMap.get(key)!.push(match.metadata);
-    }
+    } // Reconstruct messages
 
-    // Reconstruct messages
     const messages: ChatMessage[] = [];
 
     for (const [key, chunks] of messageMap.entries()) {
       // Sort chunks by index
-      chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
+      chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0)); // Combine content
 
-      // Combine content
       const content = chunks.map((chunk) => chunk.content).join(" ");
       const [role, timestamp] = key.split("-");
 
@@ -334,9 +320,8 @@ const getConversationHistory = async (
         content,
         timestamp: parseInt(timestamp), // Store timestamp in the message
       });
-    }
+    } // Sort by timestamp
 
-    // Sort by timestamp
     return messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   } catch (error) {
     console.error("Error retrieving from Pinecone:", error);
@@ -344,7 +329,7 @@ const getConversationHistory = async (
   }
 };
 
-// Enhanced system prompt with more context awareness
+// ... (createSystemPrompt is fine)
 const createSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
@@ -357,43 +342,48 @@ const createSystemPrompt = (
       : "No previous conversation";
 
   return `Task: Generate a valid Windows Command
-User request: ${userPrompt}
-
-${historyText}
-
-Requirements:
-
-1. provide ONLY ONE single command without explanation.
-2. Use relative paths where applicable.
-3. When showing file content, check file existence first
-4. When using environment variables, verify they exist
-
-Your response:`;
+  User request: ${userPrompt}
+  
+  ${historyText}
+  
+  Requirements:
+  
+  1. provide ONLY ONE single command without explanation.
+  2. Use relative paths where applicable.
+  3. When showing file content, check file existence first
+  4. When using environment variables, verify they exist
+  
+  Your response:`;
 };
 
 // export const config = {
-//   runtime: "edge",
+//   runtime: "edge",
 // };
 
-export default async function handler(req: NextRequest) {
+// ✅ CHANGED: Updated signature to use NextApiRequest and NextApiResponse
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
-        "Access-Control-Allow-Headers":
-          "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version",
-      },
-    });
+    // ✅ CHANGED: Set headers on the response object
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,OPTIONS,PATCH,DELETE,POST,PUT"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
+    );
+    return res.status(200).end(); // Send empty response
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+    // ✅ CHANGED: Use res object for response
+    res.setHeader("Allow", ["POST"]);
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
@@ -401,16 +391,17 @@ export default async function handler(req: NextRequest) {
     const pineconeInitialized = await initPinecone();
     console.log("Pinecone initialized:", pineconeInitialized);
 
-    const body = await req.json();
+    // ✅ CHANGED: Access pre-parsed body
+    const body = req.body;
     const userPrompt = body.prompt || body.messages?.[0]?.content;
     const conversationId = body.conversationId || uuidv4();
+
+    // ✅ Your log will now work!
     console.log("Received user prompt:", userPrompt);
 
     if (!userPrompt) {
-      return new Response(JSON.stringify({ error: "Prompt is required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      // ✅ CHANGED: Use res object for response
+      return res.status(400).json({ error: "Prompt is required" });
     }
 
     // Get history only if Pinecone is working
@@ -440,6 +431,7 @@ export default async function handler(req: NextRequest) {
     ];
 
     const controller = new AbortController();
+    // ✅ UPDATED: Set timeout to 55 seconds (less than your 60s vercel.json)
     const timeout = setTimeout(() => controller.abort(), 55000);
 
     try {
@@ -477,8 +469,11 @@ export default async function handler(req: NextRequest) {
       // Save conversation to Pinecone
       if (pineconeInitialized && data?.choices?.[0]?.message?.content) {
         const aiResponse = data.choices[0].message.content;
-        console.log("Saving conversation to Pinecone");
-        await saveConversation(conversationId, userPrompt, aiResponse);
+
+        // Run this in the background (non-blocking)
+        saveConversation(conversationId, userPrompt, aiResponse).catch((err) =>
+          console.error("Non-blocking save failed:", err)
+        );
       }
 
       // Add conversationId to the response
@@ -487,13 +482,9 @@ export default async function handler(req: NextRequest) {
         conversationId,
       };
 
-      return new Response(JSON.stringify(enhancedResponse), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
+      // ✅ CHANGED: Use res object for response
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.status(200).json(enhancedResponse);
     } catch (error) {
       clearTimeout(timeout);
       throw error;
@@ -502,21 +493,14 @@ export default async function handler(req: NextRequest) {
     console.error("API Error:", error);
 
     if (error instanceof Error && error.name === "AbortError") {
-      return new Response(JSON.stringify({ error: "Request timeout" }), {
-        status: 504,
-        headers: { "Content-Type": "application/json" },
-      });
+      // ✅ CHANGED: Use res object for response
+      return res.status(504).json({ error: "Request timeout" });
     }
 
-    return new Response(
-      JSON.stringify({
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    // ✅ CHANGED: Use res object for response
+    return res.status(500).json({
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 }
