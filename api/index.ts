@@ -404,6 +404,7 @@ export default async function handler(req: NextRequest) {
     const body = await req.json();
     const userPrompt = body.prompt || body.messages?.[0]?.content;
     const conversationId = body.conversationId || uuidv4();
+    console.log("Received user prompt:", userPrompt);
 
     if (!userPrompt) {
       return new Response(JSON.stringify({ error: "Prompt is required" }), {
