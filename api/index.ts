@@ -440,7 +440,7 @@ export default async function handler(req: NextRequest) {
     ];
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    const timeout = setTimeout(() => controller.abort(), 55000);
 
     try {
       console.log("Sending request to AI model");
