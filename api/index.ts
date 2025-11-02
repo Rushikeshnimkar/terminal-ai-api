@@ -509,7 +509,7 @@ export default async function handler(
     try {
       console.log(`Sending request to AI model: ${model}`);
       const response = await fetch(
-        "https://openrouter.ai/api/v1/chat/compositions",
+        "https://openrouter.ai/api/v1/chat/completions",
         {
           method: "POST",
           headers: {
