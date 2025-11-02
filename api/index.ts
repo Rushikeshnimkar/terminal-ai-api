@@ -285,7 +285,7 @@ const getConversationHistory = async (
     const queryResponse = await pineconeQuery(
       PINECONE_INDEX_NAME,
       { conversationId },
-      100,
+      100, // Get up to 100 message chunks
       "conversations"
     );
 
@@ -329,8 +329,12 @@ const getConversationHistory = async (
   }
 };
 
-// ... (createSystemPrompt is fine)
-const createSystemPrompt = (
+// ***********************************************
+// *** 1. KEY CHANGE: RENAMED & UPDATED COMMAND PROMPT ***
+// This is your *original* prompt for generating commands,
+// but using the better JSON-requesting version from aiService.ts
+// ***********************************************
+const createCommandSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
 ): string => {
@@ -341,19 +345,62 @@ const createSystemPrompt = (
           .join("\n")}`
       : "No previous conversation";
 
-  return `Task: Generate a valid Windows Command
-  User request: ${userPrompt}
-  
-  ${historyText}
-  
-  Requirements:
-  
-  1. provide ONLY ONE single command without explanation.
-  2. Use relative paths where applicable.
-  3. When showing file content, check file existence first
-  4. When using environment variables, verify they exist
-  
-  Your response:`;
+  // This is the prompt from your aiService.ts, which is much better
+  // and asks for the JSON format.
+  return `Task: Analyze the user's request, formulate a step-by-step reasoning plan, and then generate a single, valid Windows Command Prompt (CMD) command to accomplish it.
+
+System Information:
+Current directory: (User's CWD)
+OS: Windows
+
+${historyText ? `Recent conversation:\n${historyText}\n\n` : ""}
+
+User request: ${userPrompt}
+
+Requirements:
+1.  **Reasoning:** First, provide a brief, step-by-step plan (as a string) explaining how you'll achieve the user's request.
+2.  **Command:** Second, provide ONLY ONE single-line, executable CMD command. No PowerShell.
+3.  **Safety:** Avoid destructive commands unless explicitly asked. Use relative paths.
+4.  **Format:** Your response MUST be in this exact JSON format:
+    {
+      "reasoning": "Your step-by-step plan here.",
+      "command": "Your single-line command here."
+    }
+
+Your JSON response:`;
+};
+
+// ***********************************************
+// *** 2. KEY CHANGE: ADD NEW CHAT PROMPT FUNCTION ***
+// This is the *new* prompt for conversational chat.
+// ***********************************************
+const createChatSystemPrompt = (
+  userPrompt: string,
+  history: ChatMessage[] = []
+): { role: "user" | "assistant"; content: string }[] => {
+  // Create the system message
+  const systemMessage = {
+    role: "assistant" as const,
+    content: `You are T-AI, a helpful AI assistant operating in a terminal.
+Provide clear, concise, and well-formatted answers.
+Use markdown for formatting, especially for code blocks.
+You are not a command generator; you are a conversational assistant.`,
+  };
+
+  // Format history for the chat model (get last 10 messages)
+  const historyMessages = history.slice(-10).map((msg) => ({
+    role: msg.role,
+    content: msg.content,
+  }));
+
+  // Construct the final message array
+  const messages = [
+    systemMessage,
+    ...historyMessages,
+    { role: "user" as const, content: userPrompt },
+  ];
+
+  return messages;
 };
 
 // export const config = {
@@ -393,8 +440,15 @@ export default async function handler(
 
     // ✅ CHANGED: Access pre-parsed body
     const body = req.body;
-    const userPrompt = body.prompt || body.messages?.[0]?.content;
+
+    // *****************************************************************
+    // *** 3. KEY CHANGE: GET PROMPT AND MODE FROM REQUEST BODY ***
+    // *****************************************************************
+    const userPrompt = body.prompt; // We will now get the raw user input
+    const mode = body.mode || "command"; // Default to "command" for backward compatibility
     const conversationId = body.conversationId || uuidv4();
+
+    console.log(`Received request for mode: ${mode}`);
 
     // ✅ Your log will now work!
     console.log("Received user prompt:", userPrompt);
@@ -420,36 +474,55 @@ export default async function handler(
       }
     }
 
-    // Generate system prompt with conversation history
-    const systemPrompt = createSystemPrompt(userPrompt, history);
+    // *****************************************************************
+    // *** 4. KEY CHANGE: ROUTE BASED ON MODE ***
+    // *****************************************************************
 
-    const messages = [
-      {
-        role: "user",
-        content: systemPrompt,
-      },
-    ];
+    let model: string;
+    let messages: { role: string; content: string }[];
+    let temperature: number;
+
+    if (mode === "chat") {
+      // --- CHAT MODE ---
+      console.log("Using CHAT mode");
+      model = "minimax/minimax-m2:free"; // Your chat model
+      messages = createChatSystemPrompt(userPrompt, history);
+      temperature = 0.7; // More creative for chat
+    } else {
+      // --- COMMAND MODE (default) ---
+      console.log("Using COMMAND mode");
+      model = "minimax/minimax-m2:free"; // Or your original command model
+      const systemPrompt = createCommandSystemPrompt(userPrompt, history);
+      messages = [
+        {
+          role: "user",
+          content: systemPrompt,
+        },
+      ];
+      temperature = 0.3; // Stricter for command generation
+    }
 
     const controller = new AbortController();
     // ✅ UPDATED: Set timeout to 55 seconds (less than your 60s vercel.json)
     const timeout = setTimeout(() => controller.abort(), 55000);
 
     try {
-      console.log("Sending request to AI model");
+      console.log(`Sending request to AI model: ${model}`);
       const response = await fetch(
-        "https://openrouter.ai/api/v1/chat/completions",
+        "https://openrouter.ai/api/v1/chat/compositions",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            // THE API KEY IS SECURELY STORED ON VERCEL
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             "HTTP-Referer": "https://terminal-ai-api.vercel.app",
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
-            model: "minimax/minimax-m2:free",
-            messages,
-            temperature: 0.3,
+            model: model,
+            messages: messages,
+            temperature: temperature,
             top_p: 0.9,
           }),
           signal: controller.signal,
@@ -471,6 +544,7 @@ export default async function handler(
         const aiResponse = data.choices[0].message.content;
 
         // Run this in the background (non-blocking)
+        // We save the *raw* user prompt, not the system prompt
         saveConversation(conversationId, userPrompt, aiResponse).catch((err) =>
           console.error("Non-blocking save failed:", err)
         );
