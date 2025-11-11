@@ -1,15 +1,13 @@
 // api/github/start-auth.ts
-
 import { type NextApiRequest, type NextApiResponse } from "next";
 
-// Get these from your Vercel Environment Variables
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // Allow CORS for your CLI
+  // ... (Your CORS and method checks are fine)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -30,7 +28,6 @@ export default async function handler(
   }
 
   try {
-    // 1. Ask GitHub for a device and user code
     const githubResponse = await fetch("https://github.com/login/device/code", {
       method: "POST",
       headers: {
@@ -39,7 +36,7 @@ export default async function handler(
       },
       body: JSON.stringify({
         client_id: GITHUB_CLIENT_ID,
-        scope: "repo read:user", // Request permissions for repos
+        scope: "repo read:user",
       }),
     });
 
@@ -49,12 +46,14 @@ export default async function handler(
 
     const data = await githubResponse.json();
 
-    // 2. Send the user code and verification URI back to the CLI
+    // ✅ **THE CHANGE IS HERE:**
+    // We must send all these values back to the CLI
     return res.status(200).json({
       user_code: data.user_code,
       verification_uri: data.verification_uri,
       interval: data.interval,
-      device_code: data.device_code, // This is what we use to poll
+      device_code: data.device_code, // <-- This is the secret
+      expires_in: data.expires_in, // <-- This is the timeout
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
