@@ -485,13 +485,13 @@ export default async function handler(
     if (mode === "chat") {
       // --- CHAT MODE ---
       console.log("Using CHAT mode");
-      model = "minimax/minimax-m2:free"; // Your chat model
+      model = "openrouter/polaris-alpha"; // Your chat model
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7; // More creative for chat
     } else {
       // --- COMMAND MODE (default) ---
       console.log("Using COMMAND mode");
-      model = "minimax/minimax-m2:free"; // Or your original command model
+      model = "openrouter/polaris-alpha"; // Or your original command model
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
