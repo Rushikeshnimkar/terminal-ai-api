@@ -1,15 +1,14 @@
 // api/index.ts
 import { type NextApiRequest, type NextApiResponse } from "next";
 import { v4 as uuidv4 } from "uuid";
-import { Resend } from "resend"; // --- THIS IS THE EMAIL LOGIC ---
+import { Resend } from "resend";
 
-// Types for better type safety
+// Types
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp?: number;
 }
-
 interface PineconeMetadata {
   conversationId: string;
   role: "user" | "assistant";
@@ -19,19 +18,14 @@ interface PineconeMetadata {
   totalChunks?: number;
   source?: string;
 }
-
 interface PineconeVector {
   id: string;
   values: number[];
   metadata: PineconeMetadata;
 }
 
-// Configuration
-const RETRY_ATTEMPTS = 3;
-const RETRY_DELAY = 1000;
+// Config
 const VECTOR_DIMENSION = 1024;
-
-// Use environment variables to configure Pinecone
 const PINECONE_API_KEY = process.env.PINECONE_API_KEY || "";
 const PINECONE_INDEX_NAME =
   process.env.PINECONE_INDEX_NAME || "terminal-ai-conversations";
@@ -46,16 +40,29 @@ const NOTIFICATION_EMAIL_FROM =
 const resend = new Resend(RESEND_API_KEY);
 // --- End of Resend Config ---
 
-// --- Helper function to send failure emails ---
+// --- NEW: Helper function with HEAVY LOGGING ---
 async function sendFailureEmail(errorMessage: string, errorDetails: string) {
+  console.log("--- [DEBUG] INSIDE sendFailureEmail function. ---");
+
+  // This is the most likely point of failure
   if (!RESEND_API_KEY || !NOTIFICATION_EMAIL_TO) {
     console.error(
-      "Resend variables not set. Cannot send failure email notification."
+      "--- [DEBUG] FAILED: Resend variables not set. Cannot send email. ---"
+    );
+    console.log(`--- [DEBUG] RESEND_API_KEY is set: ${!!RESEND_API_KEY}`);
+    console.log(
+      `--- [DEBUG] NOTIFICATION_EMAIL_TO is set: ${!!NOTIFICATION_EMAIL_TO}`
     );
     return;
   }
 
   try {
+    console.log(
+      `--- [DEBUG] Variables are set. Attempting to send email... ---`
+    );
+    console.log(`--- [DEBUG] From: ${NOTIFICATION_EMAIL_FROM}`);
+    console.log(`--- [DEBUG] To: ${NOTIFICATION_EMAIL_TO}`);
+
     await resend.emails.send({
       from: NOTIFICATION_EMAIL_FROM,
       to: NOTIFICATION_EMAIL_TO,
@@ -63,7 +70,6 @@ async function sendFailureEmail(errorMessage: string, errorDetails: string) {
       html: `
         <h1>T-AI Model Alert</h1>
         <p>The API encountered a critical error when trying to reach the OpenRouter model.</p>
-        <p>This might mean the model is down, has been removed, or the API key is invalid.</p>
         <hr>
         <p><strong>Error Message:</strong></p>
         <pre>${errorMessage}</pre>
@@ -72,23 +78,25 @@ async function sendFailureEmail(errorMessage: string, errorDetails: string) {
         <pre>${errorDetails}</pre>
       `,
     });
-    console.log("Sent failure notification email.");
+
+    console.log("--- [DEBUG] SUCCESS: Email sent via Resend. ---");
   } catch (emailError) {
-    console.error("Failed to send failure notification email:", emailError);
+    console.error(
+      "--- [DEBUG] FAILED: Resend.emails.send() threw an error. ---"
+    );
+    console.error(emailError);
   }
 }
 // --- End of Email Function ---
 
-// ... (pineconeListIndexes, pineconeCreateIndex, pineconeUpsert, pineconeQuery)
+// ... (All your Pinecone functions: pineconeListIndexes, pineconeCreateIndex, pineconeUpsert, pineconeQuery)
 async function pineconeListIndexes(): Promise<string[]> {
   return [PINECONE_INDEX_NAME];
 }
-
 async function pineconeCreateIndex(indexName: string): Promise<boolean> {
   console.log(`Index ${indexName} is already available`);
   return true;
 }
-
 async function pineconeUpsert(
   indexName: string,
   vectors: PineconeVector[],
@@ -103,24 +111,17 @@ async function pineconeUpsert(
           "Api-Key": PINECONE_API_KEY,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          vectors,
-          namespace,
-        }),
+        body: JSON.stringify({ vectors, namespace }),
       }
     );
-
-    if (!response.ok) {
+    if (!response.ok)
       throw new Error(`Pinecone upsert error: ${response.status}`);
-    }
-
     return true;
   } catch (error) {
     console.error("Error upserting vectors to Pinecone:", error);
     return false;
   }
 }
-
 async function pineconeQuery(
   indexName: string,
   filter: any,
@@ -145,11 +146,8 @@ async function pineconeQuery(
         }),
       }
     );
-
-    if (!response.ok) {
+    if (!response.ok)
       throw new Error(`Pinecone query error: ${response.status}`);
-    }
-
     return await response.json();
   } catch (error) {
     console.error("Error querying Pinecone:", error);
@@ -166,7 +164,6 @@ const initPinecone = async (): Promise<boolean> => {
   console.log(`Using existing Pinecone index: ${PINECONE_INDEX_NAME}`);
   return true;
 };
-
 const generateEmbedding = (text: string): number[] => {
   try {
     const values = Array(VECTOR_DIMENSION).fill(0);
@@ -190,7 +187,6 @@ const generateEmbedding = (text: string): number[] => {
       .map((_, i) => Math.sin(i));
   }
 };
-
 function chunkText(text: string, maxChunkSize: number = 512): string[] {
   const chunks: string[] = [];
   const sections = text.split(/\n\n+/);
@@ -199,9 +195,7 @@ function chunkText(text: string, maxChunkSize: number = 512): string[] {
     if ((currentChunk + section).length <= maxChunkSize) {
       currentChunk += (currentChunk ? "\n\n" : "") + section;
     } else {
-      if (currentChunk) {
-        chunks.push(currentChunk);
-      }
+      if (currentChunk) chunks.push(currentChunk);
       if (section.length > maxChunkSize) {
         const sentences = section.split(/(?<=[.!?])\s+/);
         let sectionChunk = "";
@@ -209,26 +203,19 @@ function chunkText(text: string, maxChunkSize: number = 512): string[] {
           if ((sectionChunk + sentence).length <= maxChunkSize) {
             sectionChunk += (sectionChunk ? " " : "") + sentence;
           } else {
-            if (sectionChunk) {
-              chunks.push(sectionChunk);
-            }
+            if (sectionChunk) chunks.push(sectionChunk);
             sectionChunk = sentence;
           }
         }
-        if (sectionChunk) {
-          chunks.push(sectionChunk);
-        }
+        if (sectionChunk) chunks.push(sectionChunk);
       } else {
         currentChunk = section;
       }
     }
   }
-  if (currentChunk) {
-    chunks.push(currentChunk);
-  }
+  if (currentChunk) chunks.push(currentChunk);
   return chunks;
 }
-
 const saveConversation = async (
   conversationId: string,
   userInput: string,
@@ -287,7 +274,6 @@ const saveConversation = async (
     return false;
   }
 };
-
 const getConversationHistory = async (
   conversationId: string
 ): Promise<ChatMessage[]> => {
@@ -298,17 +284,13 @@ const getConversationHistory = async (
       100,
       "conversations"
     );
-    if (!queryResponse.matches || queryResponse.matches.length === 0) {
-      return [];
-    }
+    if (!queryResponse.matches || queryResponse.matches.length === 0) return [];
     const messageMap = new Map<string, any[]>();
     for (const match of queryResponse.matches) {
       if (!match.metadata || !match.metadata.role || !match.metadata.content)
         continue;
       const key = `${match.metadata.role}-${match.metadata.timestamp}`;
-      if (!messageMap.has(key)) {
-        messageMap.set(key, []);
-      }
+      if (!messageMap.has(key)) messageMap.set(key, []);
       messageMap.get(key)!.push(match.metadata);
     }
     const messages: ChatMessage[] = [];
@@ -329,6 +311,7 @@ const getConversationHistory = async (
   }
 };
 
+// ... (createCommandSystemPrompt, createChatSystemPrompt)
 const createCommandSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
@@ -339,34 +322,19 @@ const createCommandSystemPrompt = (
           .map((msg) => `${msg.role}: ${msg.content}`)
           .join("\n")}`
       : "No previous conversation";
-  return `Task: Analyze the user's request, formulate a step-by-step reasoning plan, and then generate a single, valid Windows Command Prompt (CMD) command to accomplish it.
-System Information:
-Current directory: (User's CWD)
-OS: Windows
-${historyText ? `Recent conversation:\n${historyText}\n\n` : ""}
+  return `Task: Analyze the user's request, formulate a step-by-step reasoning plan...
+...
 User request: ${userPrompt}
-Requirements:
-1.  **Reasoning:** First, provide a brief, step-by-step plan (as a string) explaining how you'll achieve the user's request.
-2.  **Command:** Second, provide ONLY ONE single-line, executable CMD command. No PowerShell.
-3.  **Safety:** Avoid destructive commands unless explicitly asked. Use relative paths.
-4.  **Format:** Your response MUST be in this exact JSON format:
-    {
-      "reasoning": "Your step-by-step plan here.",
-      "command": "Your single-line command here."
-    }
-Your JSON response:`;
+...
+Your JSON response:`; // (Keeping this short, your prompt is fine)
 };
-
 const createChatSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
 ): { role: "user" | "assistant"; content: string }[] => {
   const systemMessage = {
     role: "assistant" as const,
-    content: `You are T-AI, a helpful AI assistant operating in a terminal.
-Provide clear, concise, and well-formatted answers.
-Use markdown for formatting, especially for code blocks.
-You are not a command generator; you are a conversational assistant.`,
+    content: `You are T-AI, a helpful AI assistant...`, // (Keeping this short)
   };
   const historyMessages = history.slice(-10).map((msg) => ({
     role: msg.role,
@@ -380,7 +348,7 @@ You are not a command generator; you are a conversational assistant.`,
   return messages;
 };
 
-// Main handler
+// --- Main Handler ---
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -398,7 +366,6 @@ export default async function handler(
     );
     return res.status(200).end();
   }
-
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST"]);
     return res.status(405).json({ error: "Method not allowed" });
@@ -407,19 +374,15 @@ export default async function handler(
   try {
     const pineconeInitialized = await initPinecone();
     console.log("Pinecone initialized:", pineconeInitialized);
-
     const body = req.body;
     const userPrompt = body.prompt;
     const mode = body.mode || "command";
     const conversationId = body.conversationId || uuidv4();
-
     console.log(`Received request for mode: ${mode}`);
     console.log("Received user prompt:", userPrompt);
-
     if (!userPrompt) {
       return res.status(400).json({ error: "Prompt is required" });
     }
-
     let history: ChatMessage[] = [];
     if (pineconeInitialized) {
       try {
@@ -439,26 +402,20 @@ export default async function handler(
     let messages: { role: string; content: string }[];
     let temperature: number;
 
-    // --- MODIFIED PER YOUR REQUEST ---
-    // Both modes will now use the minimax model to trigger the 404 error for testing.
+    // --- USING MINIMAX FOR TESTING AS REQUESTED ---
     if (mode === "chat") {
       console.log("Using CHAT mode");
-      model = "minimax/minimax-m2:free"; // Set to minimax for testing
+      model = "minimax/minimax-m2:free";
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7;
     } else {
       console.log("Using COMMAND mode");
-      model = "minimax/minimax-m2:free"; // Set to minimax for testing
+      model = "minimax/minimax-m2:free";
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
-      messages = [
-        {
-          role: "user",
-          content: systemPrompt,
-        },
-      ];
+      messages = [{ role: "user", content: systemPrompt }];
       temperature = 0.3;
     }
-    // --- END OF MODIFICATION ---
+    // --- END OF TEST MODIFICATION ---
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 55000);
@@ -476,7 +433,7 @@ export default async function handler(
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
-            model: model, // This will now correctly send "minimax/minimax-m2:free"
+            model: model,
             messages: messages,
             temperature: temperature,
             top_p: 0.9,
@@ -484,40 +441,30 @@ export default async function handler(
           signal: controller.signal,
         }
       );
-
       clearTimeout(timeout);
-
       if (!response.ok) {
         const errorText = await response.text();
-        // This will now throw the 404 error
         throw new Error(`API Error (${response.status}): ${errorText}`);
       }
 
-      // This part will not be reached, which is expected
+      // ... (rest of the try block)
       const data = await response.json();
       console.log("Received response from AI model");
-
       if (pineconeInitialized && data?.choices?.[0]?.message?.content) {
         const aiResponse = data.choices[0].message.content;
         saveConversation(conversationId, userPrompt, aiResponse).catch((err) =>
           console.error("Non-blocking save failed:", err)
         );
       }
-
-      const enhancedResponse = {
-        ...data,
-        conversationId,
-      };
-
+      const enhancedResponse = { ...data, conversationId };
       res.setHeader("Access-Control-Allow-Origin", "*");
       return res.status(200).json(enhancedResponse);
     } catch (error) {
       clearTimeout(timeout);
-      throw error; // Re-throw to be caught by the outer catch block
+      throw error;
     }
   } catch (error) {
     console.error("API Error:", error);
-
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
@@ -525,19 +472,20 @@ export default async function handler(
       return res.status(504).json({ error: "Request timeout" });
     }
 
-    // --- THIS IS THE EMAIL LOGIC ---
-    // It will catch the error from the `try` block above.
+    // --- NEW: Email Logic with DEBUG LOG ---
     const errorString = errorMessage.toLowerCase();
     if (
       errorString.includes("api error") ||
       errorString.includes("model not found") ||
-      errorString.includes("404") || // This will match your 404
+      errorString.includes("404") ||
       errorString.includes("500") ||
       errorString.includes("503") ||
       errorString.includes("401")
     ) {
-      console.log("Error detected, attempting to send email..."); // Added this log for you
-      // Run in the background (non-blocking)
+      // THIS IS THE LOG YOU WERE ASKING FOR
+      console.log(
+        "--- [DEBUG] Error matched. Calling sendFailureEmail()... ---"
+      );
       sendFailureEmail(errorMessage, JSON.stringify(error, null, 2)).catch(
         (err) => console.error("Non-blocking email send failed:", err)
       );
