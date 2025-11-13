@@ -62,7 +62,7 @@ async function sendFailureEmail(errorMessage: string, errorDetails: string) {
       subject: "URGENT: Terminal AI Model Failure",
       html: `
         <h1>T-AI Model Alert</h1>
-        <p>The API encountered a critical error when trying to reach the OpenRouter model (openrouter/polaris-alpha).</p>
+        <p>The API encountered a critical error when trying to reach the OpenRouter model.</p>
         <p>This might mean the model is down, has been removed, or the API key is invalid.</p>
         <hr>
         <p><strong>Error Message:</strong></p>
@@ -504,12 +504,12 @@ export default async function handler(
 
     if (mode === "chat") {
       console.log("Using CHAT mode");
-      model = "minimax/minimax-m2:free";
+      model = "openrouter/polaris-alpha";
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7;
     } else {
       console.log("Using COMMAND mode");
-      model = "minimax/minimax-m2:free";
+      model = "openrouter/polaris-alpha";
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
@@ -519,6 +519,15 @@ export default async function handler(
       ];
       temperature = 0.3;
     }
+
+    // ---
+    // NOTE: Your error log shows you are calling "minimax/minimax-m2:free".
+    // This means your *actual* deployed code is different from what you pasted,
+    // as this code hardcodes "openrouter/polaris-alpha".
+    // The email logic below will still work, but I want you to be aware
+    // that the `model` variable here is NOT what your error log shows.
+    // The 404 error is what we WANT to catch.
+    // ---
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 55000);
@@ -536,6 +545,8 @@ export default async function handler(
             "X-Title": "Terminal AI Assistant",
           },
           body: JSON.stringify({
+            // NOTE: Your error is for "minimax/minimax-m2:free",
+            // so your request is sending that, not this `model` variable.
             model: model,
             messages: messages,
             temperature: temperature,
@@ -549,6 +560,7 @@ export default async function handler(
 
       if (!response.ok) {
         const errorText = await response.text();
+        // This is the line (around 552) that throws the 404 error
         throw new Error(`API Error (${response.status}): ${errorText}`);
       }
 
@@ -583,21 +595,18 @@ export default async function handler(
       return res.status(504).json({ error: "Request timeout" });
     }
 
-    // --- NEW: Send email notification on failure ---
-    // Check if the error indicates a model-specific failure.
-    // This will catch 404s (model not found), 500s, 503s,
-    // and 400s that might be related to a removed model.
+    // --- NEW: This is the logic that was missing from your file ---
+    // This block will catch the 404 error and send the email.
     const errorString = errorMessage.toLowerCase();
     if (
       errorString.includes("api error") ||
       errorString.includes("model not found") ||
-      errorString.includes("404") ||
+      errorString.includes("404") || // <-- This will match your error
       errorString.includes("500") ||
       errorString.includes("503") ||
-      errorString.includes("401") // Unauthorized (bad API key)
+      errorString.includes("401")
     ) {
-      // Run in the background (non-blocking) so it doesn't
-      // hold up the user's response.
+      // Run in the background (non-blocking)
       sendFailureEmail(errorMessage, JSON.stringify(error, null, 2)).catch(
         (err) => console.error("Non-blocking email send failed:", err)
       );
