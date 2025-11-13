@@ -504,12 +504,12 @@ export default async function handler(
 
     if (mode === "chat") {
       console.log("Using CHAT mode");
-      model = "openrouter/polaris-alpha";
+      model = "minimax/minimax-m2:free";
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7;
     } else {
       console.log("Using COMMAND mode");
-      model = "openrouter/polaris-alpha";
+      model = "minimax/minimax-m2:free";
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
@@ -576,7 +576,8 @@ export default async function handler(
   } catch (error) {
     console.error("API Error:", error);
 
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
 
     if (error instanceof Error && error.name === "AbortError") {
       return res.status(504).json({ error: "Request timeout" });
