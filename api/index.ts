@@ -405,12 +405,12 @@ export default async function handler(
     // --- USING MINIMAX FOR TESTING AS REQUESTED ---
     if (mode === "chat") {
       console.log("Using CHAT mode");
-      model = "minimax/minimax-m2:free";
+      model = "openrouter/polaris-alpha";
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7;
     } else {
       console.log("Using COMMAND mode");
-      model = "minimax/minimax-m2:free";
+      model = "openrouter/polaris-alpha";
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [{ role: "user", content: systemPrompt }];
       temperature = 0.3;
