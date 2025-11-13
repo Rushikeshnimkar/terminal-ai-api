@@ -465,6 +465,7 @@ export default async function handler(
     }
   } catch (error) {
     console.error("API Error:", error);
+
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
@@ -472,26 +473,33 @@ export default async function handler(
       return res.status(504).json({ error: "Request timeout" });
     }
 
-    // --- NEW: Email Logic with DEBUG LOG ---
+    // --- NEW: Email Logic with await ---
     const errorString = errorMessage.toLowerCase();
     if (
       errorString.includes("api error") ||
       errorString.includes("model not found") ||
-      errorString.includes("404") ||
+      errorString.includes("404") || // This will match your 404
       errorString.includes("500") ||
       errorString.includes("503") ||
       errorString.includes("401")
     ) {
-      // THIS IS THE LOG YOU WERE ASKING FOR
       console.log(
-        "--- [DEBUG] Error matched. Calling sendFailureEmail()... ---"
+        "--- [DEBUG] Error matched. AWAITING sendFailureEmail()... ---"
       );
-      sendFailureEmail(errorMessage, JSON.stringify(error, null, 2)).catch(
-        (err) => console.error("Non-blocking email send failed:", err)
-      );
+
+      // THIS IS THE FIX: We added "await" here.
+      try {
+        await sendFailureEmail(errorMessage, JSON.stringify(error, null, 2));
+      } catch (emailErr) {
+        console.error(
+          "--- [DEBUG] sendFailureEmail function itself failed:",
+          emailErr
+        );
+      }
     }
     // --- End of Email Logic ---
 
+    // This line will now only run AFTER the email function has finished.
     return res.status(500).json({
       error: "Internal server error",
       details: errorMessage,
