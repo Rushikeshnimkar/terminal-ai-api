@@ -567,8 +567,11 @@ export default async function handler(
 
     try {
       console.log(`Sending request to AI model: ${model}`);
+      // --- [FIXED] ---
+      // Removed the apostrophe from "https'://"
       const response = await fetch(
-        "https'://openrouter.ai/api/v1/chat/completions",
+        "https://openrouter.ai/api/v1/chat/completions",
+        // --- [END FIX] ---
         {
           method: "POST",
           headers: {
