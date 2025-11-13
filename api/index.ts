@@ -1,5 +1,7 @@
+// api/index.ts
 import { type NextApiRequest, type NextApiResponse } from "next";
 import { v4 as uuidv4 } from "uuid";
+import { Resend } from "resend"; // --- NEW ---
 
 // Types for better type safety
 interface ChatMessage {
@@ -7,7 +9,7 @@ interface ChatMessage {
   content: string;
   timestamp?: number;
 }
-
+// ... (rest of your interfaces)
 interface PineconeMetadata {
   conversationId: string;
   role: "user" | "assistant";
@@ -35,7 +37,49 @@ const PINECONE_INDEX_NAME =
   process.env.PINECONE_INDEX_NAME || "terminal-ai-conversations";
 const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT || "gcp-starter";
 
-// Direct HTTP calls to Pinecone instead of using the SDK
+// --- NEW: Resend Configuration ---
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const NOTIFICATION_EMAIL_TO = process.env.NOTIFICATION_EMAIL_TO || "";
+const NOTIFICATION_EMAIL_FROM =
+  process.env.NOTIFICATION_EMAIL_FROM || "onboarding@resend.dev";
+
+const resend = new Resend(RESEND_API_KEY);
+// --- End of NEW ---
+
+// --- NEW: Helper function to send failure emails ---
+async function sendFailureEmail(errorMessage: string, errorDetails: string) {
+  if (!RESEND_API_KEY || !NOTIFICATION_EMAIL_TO) {
+    console.error(
+      "Resend variables not set. Cannot send failure email notification."
+    );
+    return;
+  }
+
+  try {
+    await resend.emails.send({
+      from: NOTIFICATION_EMAIL_FROM,
+      to: NOTIFICATION_EMAIL_TO,
+      subject: "URGENT: Terminal AI Model Failure",
+      html: `
+        <h1>T-AI Model Alert</h1>
+        <p>The API encountered a critical error when trying to reach the OpenRouter model (openrouter/polaris-alpha).</p>
+        <p>This might mean the model is down, has been removed, or the API key is invalid.</p>
+        <hr>
+        <p><strong>Error Message:</strong></p>
+        <pre>${errorMessage}</pre>
+        <br>
+        <p><strong>Full Error Details:</strong></p>
+        <pre>${errorDetails}</pre>
+      `,
+    });
+    console.log("Sent failure notification email.");
+  } catch (emailError) {
+    console.error("Failed to send failure notification email:", emailError);
+  }
+}
+// --- End of NEW ---
+
+// ... (pineconeListIndexes, pineconeCreateIndex, pineconeUpsert, pineconeQuery)
 async function pineconeListIndexes(): Promise<string[]> {
   // Since we already know your index exists, we can skip listing
   // and just return a hardcoded array with your index name
@@ -119,7 +163,6 @@ async function pineconeQuery(
 }
 
 // ... (initPinecone, generateEmbedding, chunkText, saveConversation, getConversationHistory)
-// ...
 const initPinecone = async (): Promise<boolean> => {
   // Skip Pinecone if API key is not set
   if (!PINECONE_API_KEY) {
@@ -329,11 +372,7 @@ const getConversationHistory = async (
   }
 };
 
-// ***********************************************
-// *** 1. KEY CHANGE: RENAMED & UPDATED COMMAND PROMPT ***
-// This is your *original* prompt for generating commands,
-// but using the better JSON-requesting version from aiService.ts
-// ***********************************************
+// ... (createCommandSystemPrompt, createChatSystemPrompt)
 const createCommandSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
@@ -370,10 +409,6 @@ Requirements:
 Your JSON response:`;
 };
 
-// ***********************************************
-// *** 2. KEY CHANGE: ADD NEW CHAT PROMPT FUNCTION ***
-// This is the *new* prompt for conversational chat.
-// ***********************************************
 const createChatSystemPrompt = (
   userPrompt: string,
   history: ChatMessage[] = []
@@ -407,13 +442,11 @@ You are not a command generator; you are a conversational assistant.`,
 //   runtime: "edge",
 // };
 
-// ✅ CHANGED: Updated signature to use NextApiRequest and NextApiResponse
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method === "OPTIONS") {
-    // ✅ CHANGED: Set headers on the response object
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader(
@@ -428,7 +461,6 @@ export default async function handler(
   }
 
   if (req.method !== "POST") {
-    // ✅ CHANGED: Use res object for response
     res.setHeader("Allow", ["POST"]);
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -438,27 +470,19 @@ export default async function handler(
     const pineconeInitialized = await initPinecone();
     console.log("Pinecone initialized:", pineconeInitialized);
 
-    // ✅ CHANGED: Access pre-parsed body
     const body = req.body;
 
-    // *****************************************************************
-    // *** 3. KEY CHANGE: GET PROMPT AND MODE FROM REQUEST BODY ***
-    // *****************************************************************
-    const userPrompt = body.prompt; // We will now get the raw user input
-    const mode = body.mode || "command"; // Default to "command" for backward compatibility
+    const userPrompt = body.prompt;
+    const mode = body.mode || "command";
     const conversationId = body.conversationId || uuidv4();
 
     console.log(`Received request for mode: ${mode}`);
-
-    // ✅ Your log will now work!
     console.log("Received user prompt:", userPrompt);
 
     if (!userPrompt) {
-      // ✅ CHANGED: Use res object for response
       return res.status(400).json({ error: "Prompt is required" });
     }
 
-    // Get history only if Pinecone is working
     let history: ChatMessage[] = [];
     if (pineconeInitialized) {
       try {
@@ -474,24 +498,18 @@ export default async function handler(
       }
     }
 
-    // *****************************************************************
-    // *** 4. KEY CHANGE: ROUTE BASED ON MODE ***
-    // *****************************************************************
-
     let model: string;
     let messages: { role: string; content: string }[];
     let temperature: number;
 
     if (mode === "chat") {
-      // --- CHAT MODE ---
       console.log("Using CHAT mode");
-      model = "openrouter/polaris-alpha"; // Your chat model
+      model = "openrouter/polaris-alpha";
       messages = createChatSystemPrompt(userPrompt, history);
-      temperature = 0.7; // More creative for chat
+      temperature = 0.7;
     } else {
-      // --- COMMAND MODE (default) ---
       console.log("Using COMMAND mode");
-      model = "openrouter/polaris-alpha"; // Or your original command model
+      model = "openrouter/polaris-alpha";
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
@@ -499,11 +517,10 @@ export default async function handler(
           content: systemPrompt,
         },
       ];
-      temperature = 0.3; // Stricter for command generation
+      temperature = 0.3;
     }
 
     const controller = new AbortController();
-    // ✅ UPDATED: Set timeout to 55 seconds (less than your 60s vercel.json)
     const timeout = setTimeout(() => controller.abort(), 55000);
 
     try {
@@ -514,7 +531,6 @@ export default async function handler(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            // THE API KEY IS SECURELY STORED ON VERCEL
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             "HTTP-Referer": "https://terminal-ai-api.vercel.app",
             "X-Title": "Terminal AI Assistant",
@@ -539,42 +555,57 @@ export default async function handler(
       const data = await response.json();
       console.log("Received response from AI model");
 
-      // Save conversation to Pinecone
       if (pineconeInitialized && data?.choices?.[0]?.message?.content) {
         const aiResponse = data.choices[0].message.content;
-
-        // Run this in the background (non-blocking)
-        // We save the *raw* user prompt, not the system prompt
         saveConversation(conversationId, userPrompt, aiResponse).catch((err) =>
           console.error("Non-blocking save failed:", err)
         );
       }
 
-      // Add conversationId to the response
       const enhancedResponse = {
         ...data,
         conversationId,
       };
 
-      // ✅ CHANGED: Use res object for response
       res.setHeader("Access-Control-Allow-Origin", "*");
       return res.status(200).json(enhancedResponse);
     } catch (error) {
       clearTimeout(timeout);
-      throw error;
+      throw error; // Re-throw to be caught by the outer catch block
     }
   } catch (error) {
     console.error("API Error:", error);
 
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
     if (error instanceof Error && error.name === "AbortError") {
-      // ✅ CHANGED: Use res object for response
       return res.status(504).json({ error: "Request timeout" });
     }
 
-    // ✅ CHANGED: Use res object for response
+    // --- NEW: Send email notification on failure ---
+    // Check if the error indicates a model-specific failure.
+    // This will catch 404s (model not found), 500s, 503s,
+    // and 400s that might be related to a removed model.
+    const errorString = errorMessage.toLowerCase();
+    if (
+      errorString.includes("api error") ||
+      errorString.includes("model not found") ||
+      errorString.includes("404") ||
+      errorString.includes("500") ||
+      errorString.includes("503") ||
+      errorString.includes("401") // Unauthorized (bad API key)
+    ) {
+      // Run in the background (non-blocking) so it doesn't
+      // hold up the user's response.
+      sendFailureEmail(errorMessage, JSON.stringify(error, null, 2)).catch(
+        (err) => console.error("Non-blocking email send failed:", err)
+      );
+    }
+    // --- End of NEW ---
+
     return res.status(500).json({
       error: "Internal server error",
-      details: error instanceof Error ? error.message : "Unknown error",
+      details: errorMessage,
     });
   }
 }
