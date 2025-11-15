@@ -544,13 +544,13 @@ export default async function handler(
     if (mode === "chat") {
       // --- CHAT MODE ---
       console.log("Using CHAT mode");
-      model = "openrouter/polaris-alpha"; // Your chat model
+      model = "kwaipilot/kat-coder-pro:free"; // Your chat model
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7; // More creative for chat
     } else {
       // --- COMMAND MODE (default) ---
       console.log("Using COMMAND mode");
-      model = "openrouter/polaris-alpha"; // Or your original command model
+      model = "kwaipilot/kat-coder-pro:free"; // Or your original command model
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
