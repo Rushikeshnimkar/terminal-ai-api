@@ -544,13 +544,13 @@ export default async function handler(
     if (mode === "chat") {
       // --- CHAT MODE ---
       console.log("Using CHAT mode");
-      model = "upstage/solar-pro-3:free"; // Your chat model
+      model = "stepfun/step-3.5-flash:free"; // Your chat model
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7; // More creative for chat
     } else {
       // --- COMMAND MODE (default) ---
       console.log("Using COMMAND mode");
-      model = "upstage/solar-pro-3:free"; // Or your original command model
+      model = "stepfun/step-3.5-flash:free"; // Or your original command model
       const systemPrompt = createCommandSystemPrompt(userPrompt, history);
       messages = [
         {
