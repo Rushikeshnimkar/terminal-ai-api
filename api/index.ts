@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import { type NextApiRequest, type NextApiResponse } from "next";
 import { v4 as uuidv4 } from "uuid";
 import { Resend } from "resend"; // --- ADDED ---
@@ -26,15 +27,12 @@ interface PineconeVector {
 }
 
 // Configuration
-const RETRY_ATTEMPTS = 3;
-const RETRY_DELAY = 1000;
 const VECTOR_DIMENSION = 1024;
 
 // Use environment variables to configure Pinecone
 const PINECONE_API_KEY = process.env.PINECONE_API_KEY || "";
 const PINECONE_INDEX_NAME =
   process.env.PINECONE_INDEX_NAME || "terminal-ai-conversations";
-const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT || "gcp-starter";
 
 // --- [ADDED] Resend Configuration ---
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
@@ -44,6 +42,44 @@ const NOTIFICATION_EMAIL_FROM =
 
 const resend = new Resend(RESEND_API_KEY);
 // --- [ADDED] End of Resend Config ---
+
+function verifyHandshake(signature?: string, clientTimestamp?: string): boolean {
+  if (!signature || !clientTimestamp) {
+    return false;
+  }
+
+  const parsedTimestamp = parseInt(clientTimestamp, 10);
+  if (isNaN(parsedTimestamp)) {
+    return false;
+  }
+
+  // Check client timestamp window drift relative to server timestamp (rounded to 30s)
+  const currentTimestamp = Math.floor(Date.now() / 30000);
+  const drift = Math.abs(currentTimestamp - parsedTimestamp);
+  
+  // Allow a maximum drift of 2 windows (approx 60 seconds)
+  if (drift > 2) {
+    return false;
+  }
+
+  const SALT_PARTS = ["tai", "terminal", "assistant", "super", "secret", "salt", "2026"];
+  const secret = SALT_PARTS.join("-");
+
+  // Re-generate expected signature for client timestamp
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(String(parsedTimestamp));
+  const expectedSignature = hmac.digest("hex");
+
+  // Constant-time comparison to prevent timing attacks
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, "hex"),
+      Buffer.from(expectedSignature, "hex")
+    );
+  } catch (e) {
+    return false;
+  }
+}
 
 // --- [ADDED] Helper function with HEAVY LOGGING ---
 async function sendFailureEmail(errorMessage: string, errorDetails: string) {
@@ -95,17 +131,6 @@ async function sendFailureEmail(errorMessage: string, errorDetails: string) {
 // --- [ADDED] End of Email Function ---
 
 // Direct HTTP calls to Pinecone instead of using the SDK
-async function pineconeListIndexes(): Promise<string[]> {
-  // Since we already know your index exists, we can skip listing
-  // and just return a hardcoded array with your index name
-  return [PINECONE_INDEX_NAME];
-}
-
-async function pineconeCreateIndex(indexName: string): Promise<boolean> {
-  // Since we know the index already exists, just return true
-  console.log(`Index ${indexName} is already available`);
-  return true;
-}
 
 async function pineconeUpsert(
   indexName: string,
@@ -395,35 +420,91 @@ const getConversationHistory = async (
 // ***********************************************
 const createCommandSystemPrompt = (
   userPrompt: string,
-  history: ChatMessage[] = []
+  history: ChatMessage[] = [],
+  shell: string = "cmd"
 ): string => {
   const historyText =
     history.length > 0
       ? `Previous conversation:\n${history
-        .map((msg) => `${msg.role}: ${msg.content}`)
+        .map((msg) => `${msg.role.toUpperCase()}: ${msg.content}`)
         .join("\n")}`
-      : "No previous conversation";
+      : "";
 
-  // This is the prompt from your aiService.ts, which is much better
-  // and asks for the JSON format.
-  return `Task: Analyze the user's request, formulate a step-by-step reasoning plan, and then generate a single, valid Windows Command Prompt (CMD) command to accomplish it.
+  const shellNames: Record<string, string> = {
+    cmd: "Windows Command Prompt (CMD)",
+    powershell: "PowerShell",
+    gitbash: "Git Bash (sh/bash)",
+  };
+
+  const targetShell = shellNames[shell.toLowerCase()] || "Windows Command Prompt (CMD)";
+  const shellInstructions = shell.toLowerCase() === "powershell"
+    ? "PowerShell. No standard CMD or Bash syntax."
+    : shell.toLowerCase() === "gitbash"
+      ? "Git Bash (sh/bash). No CMD or PowerShell syntax."
+      : "CMD. No PowerShell or Bash syntax.";
+
+  return `Task: Analyze the user's request, formulate a step-by-step reasoning plan, and then generate a single, valid ${targetShell} command to accomplish it.
 
 System Information:
 Current directory: (User's CWD)
 OS: Windows
+Active Shell: ${targetShell}
 
 ${historyText ? `Recent conversation:\n${historyText}\n\n` : ""}
 
 User request: ${userPrompt}
 
 Requirements:
-1.  **Reasoning:** First, provide a brief, step-by-step plan (as a string) explaining how you'll achieve the user's request.
-2.  **Command:** Second, provide ONLY ONE single-line, executable CMD command. No PowerShell.
-3.  **Safety:** Avoid destructive commands unless explicitly asked. Use relative paths.
-4.  **Format:** Your response MUST be in this exact JSON format:
+1. **Reasoning:** First, provide a brief, step-by-step plan (as a string) explaining how you'll achieve the user's request.
+2. **Command:** Second, provide ONLY ONE single-line, executable command compatible with ${shellInstructions}
+3. **Safety:** Avoid destructive commands unless explicitly asked. Use relative paths.
+4. **Format:** Your response MUST be in this exact JSON format. Never wrap properties in extra Markdown code blocks inside the values:
     {
       "reasoning": "Your step-by-step plan here.",
       "command": "Your single-line command here."
+    }
+
+Your JSON response:`;
+};
+
+const createFixSystemPrompt = (
+  originalQuery: string,
+  failedCommand: string,
+  errorOutput: string,
+  shell: string = "cmd"
+): string => {
+  const shellNames: Record<string, string> = {
+    cmd: "Windows Command Prompt (CMD)",
+    powershell: "PowerShell",
+    gitbash: "Git Bash (sh/bash)",
+  };
+
+  const targetShell = shellNames[shell.toLowerCase()] || "Windows Command Prompt (CMD)";
+  const shellInstructions = shell.toLowerCase() === "powershell"
+    ? "PowerShell. No standard CMD or Bash syntax."
+    : shell.toLowerCase() === "gitbash"
+      ? "Git Bash (sh/bash). No CMD or PowerShell syntax."
+      : "CMD. No PowerShell or Bash syntax.";
+
+  return `Task: Analyze the user's original request, the command that failed, and the error output returned by the shell. Identify the syntax or logic error and generate a single, valid corrected ${targetShell} command to accomplish it.
+
+System Information:
+OS: Windows
+Active Shell: ${targetShell}
+
+Failed Context:
+Original User Request: ${originalQuery}
+Failed Command Executed: ${failedCommand}
+Shell Error Output: ${errorOutput}
+
+Requirements:
+1. **Reasoning:** Explain why the previous command failed and how the corrected command fixes it.
+2. **Command:** Provide ONLY ONE corrected, single-line, executable command compatible with ${shellInstructions}
+3. **Safety:** Avoid destructive commands. Use relative paths.
+4. **Format:** Your response MUST be in this exact JSON format. Never wrap properties in extra Markdown code blocks inside the values:
+    {
+      "reasoning": "Explanation of failure and fix here.",
+      "command": "Your corrected single-line command here."
     }
 
 Your JSON response:`;
@@ -492,6 +573,19 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  // *****************************************************************
+  // *** KEY CHANGE: CRYPTOGRAPHIC HANDSHAKE SIGNATURE VALIDATION ***
+  // *****************************************************************
+  const signature = req.headers["x-t-ai-signature"] as string | undefined;
+  const timestamp = req.headers["x-t-ai-timestamp"] as string | undefined;
+
+  if (!verifyHandshake(signature, timestamp)) {
+    console.error("Access Denied: Invalid or missing client handshake signature.");
+    return res.status(401).json({
+      error: "Unauthorized: Invalid or missing cryptographic client handshake. Please use the official T-AI CLI tool.",
+    });
+  }
+
   try {
     // Initialize Pinecone - but don't fail if it doesn't work
     const pineconeInitialized = await initPinecone();
@@ -506,6 +600,7 @@ export default async function handler(
     const userPrompt = body.prompt; // We will now get the raw user input
     const mode = body.mode || "command"; // Default to "command" for backward compatibility
     const conversationId = body.conversationId || uuidv4();
+    const shell = body.shell || "cmd";
 
     console.log(`Received request for mode: ${mode}`);
 
@@ -517,17 +612,21 @@ export default async function handler(
       return res.status(400).json({ error: "Prompt is required" });
     }
 
-    // Get history only if Pinecone is working
+    // Try to get history from the request body sent by the client.
+    // If not provided, fallback to Pinecone if initialized.
     let history: ChatMessage[] = [];
-    if (pineconeInitialized) {
+    if (body.history && Array.isArray(body.history)) {
+      history = body.history;
+      console.log(`Using client-provided history (${history.length} messages)`);
+    } else if (pineconeInitialized) {
       try {
         history = await getConversationHistory(conversationId);
         console.log(
-          `Retrieved ${history.length} messages from conversation history`
+          `Retrieved ${history.length} messages from Pinecone conversation history`
         );
       } catch (historyError) {
         console.error(
-          "Error retrieving history, continuing without it:",
+          "Error retrieving history from Pinecone, continuing without it:",
           historyError
         );
       }
@@ -544,14 +643,29 @@ export default async function handler(
     if (mode === "chat") {
       // --- CHAT MODE ---
       console.log("Using CHAT mode");
-      model = "stepfun/step-3.5-flash:free"; // Your chat model
+      model = "poolside/laguna-m.1:free"; // Your chat model
       messages = createChatSystemPrompt(userPrompt, history);
       temperature = 0.7; // More creative for chat
+    } else if (mode === "fix") {
+      // --- FIX MODE ---
+      console.log("Using FIX mode");
+      model = "poolside/laguna-m.1:free";
+      const failedCommand = body.failedCommand || "";
+      const errorOutput = body.errorOutput || "";
+      const originalQuery = body.originalQuery || userPrompt;
+      const systemPrompt = createFixSystemPrompt(originalQuery, failedCommand, errorOutput, shell);
+      messages = [
+        {
+          role: "user",
+          content: systemPrompt,
+        },
+      ];
+      temperature = 0.3; // Stricter for syntax correction
     } else {
       // --- COMMAND MODE (default) ---
       console.log("Using COMMAND mode");
-      model = "stepfun/step-3.5-flash:free"; // Or your original command model
-      const systemPrompt = createCommandSystemPrompt(userPrompt, history);
+      model = "poolside/laguna-m.1:free"; // Or your original command model
+      const systemPrompt = createCommandSystemPrompt(userPrompt, history, shell);
       messages = [
         {
           role: "user",
@@ -586,6 +700,8 @@ export default async function handler(
             messages: messages,
             temperature: temperature,
             top_p: 0.9,
+            ...((mode === "command" || mode === "fix") ? { response_format: { type: "json_object" } } : {}),
+            stream: mode === "chat" ? true : undefined,
           }),
           signal: controller.signal,
         }
@@ -596,6 +712,59 @@ export default async function handler(
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`API Error (${response.status}): ${errorText}`);
+      }
+
+      if (mode === "chat") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+
+        const reader = response.body;
+        if (!reader) {
+          throw new Error("No readable stream in response");
+        }
+
+        let accumulatedContent = "";
+        const decoder = new TextDecoder();
+
+        for await (const chunk of reader as any) {
+          res.write(chunk);
+
+          try {
+            const text = decoder.decode(chunk, { stream: true });
+            const lines = text.split("\n");
+            for (const line of lines) {
+              const cleaned = line.trim();
+              if (cleaned.startsWith("data: ")) {
+                const dataStr = cleaned.slice(6).trim();
+                if (dataStr === "[DONE]") continue;
+
+                const parsed = JSON.parse(dataStr);
+                const content = parsed.choices?.[0]?.delta?.content || "";
+                accumulatedContent += content;
+              }
+            }
+          } catch (e) {
+            // Silently ignore chunk parsing errors for background accumulator
+          }
+
+          if ((res as any).flush) {
+            (res as any).flush();
+          }
+        }
+
+        res.end();
+
+        if (pineconeInitialized && accumulatedContent) {
+          saveConversation(conversationId, userPrompt, accumulatedContent).catch((err) =>
+            console.error("Non-blocking save failed:", err)
+          );
+        }
+
+        return;
       }
 
       const data = await response.json();
